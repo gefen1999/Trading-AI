@@ -32,4 +32,5 @@ def get_prices(tickers: list[str]) -> dict[str, float]:
         except Exception:
             continue
 
+
     return prices

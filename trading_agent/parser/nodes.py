@@ -8,59 +8,31 @@ from parser.prompts import SYSTEM_PROMPT
 from parser.schema import ParsedQuery
 
 
-def _get_llm_provider() -> str:
-    load_dotenv()
-    provider = os.getenv("LLM_PROVIDER", "").lower()
-    if provider in ("anthropic", "openai"):
-        return provider
-    if os.getenv("OPENAI_API_KEY") and not os.getenv("ANTHROPIC_API_KEY"):
-        return "openai"
-    return "anthropic"
+def _call_ollama(raw_text: str) -> ParsedQuery:
+    from ollama import Client
 
+    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    model = os.getenv("OLLAMA_MODEL", "llama3.1")
 
-def _call_anthropic(raw_text: str) -> ParsedQuery:
-    from anthropic import Anthropic
-
-    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-
-    message = client.beta.messages.parse(
-        model=model,
-        max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": raw_text}],
-        output_format=ParsedQuery,
-    )
-    if message.parsed_output is None:
-        raise ValueError("LLM returned no structured output")
-    return message.parsed_output
-
-
-def _call_openai(raw_text: str) -> ParsedQuery:
-    from openai import OpenAI
-
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    model = os.getenv("OPENAI_MODEL", "gpt-4o")
-
-    completion = client.beta.chat.completions.parse(
+    client = Client(host=host)
+    response = client.chat(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": raw_text},
         ],
-        response_format=ParsedQuery,
+        format=ParsedQuery.model_json_schema(),
     )
-    parsed = completion.choices[0].message.parsed
-    if parsed is None:
-        raise ValueError("LLM returned no structured output")
-    return parsed
+    content = response["message"]["content"]
+    return ParsedQuery.model_validate_json(content)
 
 
 def parse_node(state: ParserState) -> ParserState:
     """
     Sends state["raw_text"] + the system prompt (from prompts.py) to the
-    LLM API, requesting structured output per the ParsedQuery schema.
-    Updates and returns state with a fully populated parsed_query.
+    local LLM (via Ollama), requesting structured output per the
+    ParsedQuery schema. Updates and returns state with a fully populated
+    parsed_query.
     """
     load_dotenv()
     raw_text = state["raw_text"]
@@ -70,11 +42,7 @@ def parse_node(state: ParserState) -> ParserState:
     # calling the LLM again with the same text.
 
     try:
-        provider = _get_llm_provider()
-        if provider == "openai":
-            parsed_query = _call_openai(raw_text)
-        else:
-            parsed_query = _call_anthropic(raw_text)
+        parsed_query = _call_ollama(raw_text)
     except Exception as exc:
         state["validation_errors"].append(f"LLM parse failed: {exc}")
         return state

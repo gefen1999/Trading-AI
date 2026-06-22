@@ -8,7 +8,7 @@ import prices
 sys.modules["data_feed"] = prices
 
 from parser.graph import parse_trading_query
-from data_feed import get_prices
+from prices import get_prices
 from evaluation import check_query
 
 # Fixed input for now - a single hardcoded query string for quick testing.
