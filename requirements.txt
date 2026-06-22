@@ -1,1 +1,6 @@
 yfinance
+langgraph
+pydantic
+anthropic
+openai
+python-dotenv
