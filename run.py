@@ -13,7 +13,7 @@ from evaluation import check_query
 
 # Fixed input for now - a single hardcoded query string for quick testing.
 # Not read from stdin/argv - just a constant in the code.
-RAW_QUERY = "תקנה את אפל רק אם המחיר עולה מעל 200 והנפט מתחת ל-50"
+RAW_QUERY = "buy apple if price is above 200 and oil is below 50"
 
 
 def main():

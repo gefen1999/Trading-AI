@@ -1,15 +1,23 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 from core import ActionType, ComparisonOperator, LogicMode, NumericCondition, TradingQuery
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_ENV_FILE = _PROJECT_ROOT / ".env"
+
+
+def _load_env() -> None:
+    load_dotenv(_ENV_FILE)
 from parser.graph_state import ParserState
 from parser.prompts import SYSTEM_PROMPT
 from parser.schema import ParsedQuery
 
 
 def _get_llm_provider() -> str:
-    load_dotenv()
+    _load_env()
     provider = os.getenv("LLM_PROVIDER", "").lower()
     if provider in ("anthropic", "openai"):
         return provider
@@ -62,7 +70,7 @@ def parse_node(state: ParserState) -> ParserState:
     LLM API, requesting structured output per the ParsedQuery schema.
     Updates and returns state with a fully populated parsed_query.
     """
-    load_dotenv()
+    _load_env()
     raw_text = state["raw_text"]
 
     # TODO: implement clarification loop — if the query is ambiguous, set
