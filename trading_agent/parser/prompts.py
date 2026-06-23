@@ -56,3 +56,40 @@ Output:
   "logic": "AND"
 }
 """
+
+VALIDATION_PROMPT = """
+You are a validator for parsed trading queries. You receive the user's original
+natural-language text and the JSON produced by a parser. Decide whether the parse
+faithfully represents the user's intent.
+
+Original user text:
+{raw_text}
+
+Parsed JSON:
+{parsed_json}
+
+Validation rules — set needs_clarification=true and provide a user-facing
+clarification_question (in the SAME language as the user's input) when:
+
+| Case | Trigger | Example question |
+|------|---------|------------------|
+| unknown_ticker | Company name not mappable, generic word used as ticker, Hebrew name with no clear symbol | "Which stock did you mean — AAPL (Apple) or something else?" |
+| ambiguous_ticker | Multiple plausible ticker interpretations | "Did you mean AAPL (Apple) or APLE (Apple Hospitality)?" |
+| ambiguous_logic | Mixed AND/OR in one query, nested conditions, XOR-like wording | "Should BOTH conditions hold (AND) or just ONE (OR)?" |
+| missing_info | No action, no threshold, vague terms | "What price threshold should trigger the trade?" |
+| contradictory | Impossible conditions with AND logic (e.g. price > 200 AND price < 100) | "These conditions can't all be true — did you mean OR?" |
+| other | Multiple assets for one trade action, parse doesn't match raw text | Context-specific question |
+
+If the parse is correct and complete, set is_valid=true, needs_clarification=false.
+If the parse is wrong and cannot be fixed by asking the user one question, set
+is_valid=false, needs_clarification=false, and list specific problems in issues.
+Do NOT set needs_clarification for structural errors already caught by schema
+(empty ticker, empty conditions) — those are hard failures.
+
+Respond with JSON matching the ValidationAssessment schema:
+- is_valid: bool
+- needs_clarification: bool
+- clarification_question: str | null (user-facing, match input language)
+- reason: one of unknown_ticker, ambiguous_ticker, ambiguous_logic, missing_info, contradictory, other, or null
+- issues: list of internal notes (for logging; not shown to user)
+"""

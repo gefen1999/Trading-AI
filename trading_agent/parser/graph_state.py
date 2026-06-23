@@ -9,5 +9,8 @@ class ParserState(TypedDict):
     raw_text: str
     parsed_query: Optional[ParsedQuery]
     validation_errors: list[str]
-    needs_clarification: bool          # TODO: not implemented in v1, placeholder
-    trading_query: Optional[TradingQuery]   # the final output
+    needs_clarification: bool
+    clarification_question: Optional[str]
+    clarification_reason: Optional[str]
+    clarification_history: list[tuple[str, str]]
+    trading_query: Optional[TradingQuery]

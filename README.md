@@ -47,7 +47,7 @@ If `LLM_PROVIDER` is not set, Anthropic is used when `ANTHROPIC_API_KEY` is pres
 
 ## Run
 
-The entry point is `run.py`. It currently uses a hardcoded query for quick testing — edit `RAW_QUERY` in that file to try different inputs.
+The entry point is `run.py`. It currently uses a hardcoded query for quick testing — edit `RAW_QUERY` in that file to try different inputs. If the validator is uncertain about the parse (unknown ticker, ambiguous logic, missing info, etc.), `run.py` will prompt you interactively for clarification before continuing.
 
 ```bash
 python3 run.py

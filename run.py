@@ -7,21 +7,40 @@ import prices
 
 sys.modules["data_feed"] = prices
 
-from parser.graph import parse_trading_query
+from parser.graph import parse_trading_query_once
 from data_feed import get_prices
 from evaluation import check_query
 
 # Fixed input for now - a single hardcoded query string for quick testing.
 # Not read from stdin/argv - just a constant in the code.
 RAW_QUERY = "buy apple if price is above 200 and oil is below 50"
+MAX_CLARIFICATION_ROUNDS = 3
 
 
 def main():
     try:
         print(f"[1/4] Raw query: {RAW_QUERY}")
 
-        # Step 1: parse free text into a TradingQuery
-        query = parse_trading_query(RAW_QUERY)
+        history: list[tuple[str, str]] = []
+        query = None
+
+        for round_num in range(1, MAX_CLARIFICATION_ROUNDS + 1):
+            outcome = parse_trading_query_once(RAW_QUERY, history=history)
+
+            if outcome.query is not None:
+                query = outcome.query
+                break
+
+            if outcome.needs_clarification:
+                print(f"[Clarification {round_num}] {outcome.clarification_question}")
+                answer = input("> ")
+                history.append((outcome.clarification_question or "", answer))
+                continue
+
+            raise ValueError("; ".join(outcome.errors) or "Failed to parse query")
+        else:
+            raise ValueError("Too many clarification rounds")
+
         print(f"[2/4] Parsed query: action={query.action}, ticker={query.ticker}, "
               f"logic={query.logic}, conditions={query.conditions}")
 
