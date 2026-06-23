@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from typing import Callable
+
 from langgraph.graph import END, START, StateGraph
 
 from core import TradingQuery
@@ -5,15 +8,24 @@ from parser.graph_state import ParserState
 from parser.nodes import parse_node, validate_node
 
 
+def _default_ask_user(question: str) -> str:
+    return input(f"{question}\n> ")
+
+
+@dataclass
+class ParseOutcome:
+    query: TradingQuery | None
+    needs_clarification: bool
+    clarification_question: str | None
+    errors: list[str]
+
+
 def build_parser_graph():
     """
     Builds and returns the compiled graph:
     START -> parse_node -> validate_node -> END
 
-    This is v1 - a linear graph only. Keeping the infrastructure (state
-    with needs_clarification) allows adding a conditional edge in the
-    future: validate_node -> {needs_clarification?} -> ask_user_node / END
-    without changing existing nodes.
+    Clarification looping lives in parse_trading_query, not inside the graph.
     """
     graph = StateGraph(ParserState)
     graph.add_node("parse", parse_node)
@@ -24,26 +36,93 @@ def build_parser_graph():
     return graph.compile()
 
 
-def parse_trading_query(raw_text: str) -> TradingQuery:
-    """
-    Convenient entry point - runs the graph on raw_text, returns a
-    TradingQuery (or raises/returns an error if validation fails -
-    depending on what ParserState holds).
-    """
-    graph = build_parser_graph()
-    initial_state: ParserState = {
+def _initial_state(raw_text: str, history: list[tuple[str, str]]) -> ParserState:
+    return {
         "raw_text": raw_text,
         "parsed_query": None,
         "validation_errors": [],
         "needs_clarification": False,
+        "clarification_question": None,
+        "clarification_reason": None,
+        "clarification_history": history,
         "trading_query": None,
     }
-    result = graph.invoke(initial_state)
 
-    if result["validation_errors"]:
-        raise ValueError("; ".join(result["validation_errors"]))
 
-    if result["trading_query"] is None:
+def parse_trading_query(
+    raw_text: str,
+    *,
+    ask_user: Callable[[str], str] = _default_ask_user,
+    max_rounds: int = 3,
+) -> TradingQuery:
+    """
+    Runs the parser graph with an outer clarification loop. Returns a
+    TradingQuery or raises ValueError on hard validation failure.
+    """
+    graph = build_parser_graph()
+    history: list[tuple[str, str]] = []
+    current_text = raw_text
+
+    for _ in range(max_rounds):
+        result = graph.invoke(_initial_state(current_text, history))
+
+        if result["trading_query"] is not None:
+            return result["trading_query"]
+
+        if result["needs_clarification"]:
+            question = result.get("clarification_question") or "Could you clarify your request?"
+            answer = ask_user(question)
+            history.append((question, answer))
+            current_text = f"{raw_text}\n\nClarification: {answer}"
+            continue
+
+        if result["validation_errors"]:
+            raise ValueError("; ".join(result["validation_errors"]))
+
         raise ValueError("Failed to produce a TradingQuery")
 
-    return result["trading_query"]
+    raise ValueError("Too many clarification rounds")
+
+
+def parse_trading_query_outcome(
+    raw_text: str,
+    *,
+    ask_user: Callable[[str], str] = _default_ask_user,
+    max_rounds: int = 3,
+) -> ParseOutcome:
+    """Like parse_trading_query but returns a ParseOutcome instead of raising."""
+    graph = build_parser_graph()
+    history: list[tuple[str, str]] = []
+    current_text = raw_text
+
+    for _ in range(max_rounds):
+        result = graph.invoke(_initial_state(current_text, history))
+
+        if result["trading_query"] is not None:
+            return ParseOutcome(
+                query=result["trading_query"],
+                needs_clarification=False,
+                clarification_question=None,
+                errors=[],
+            )
+
+        if result["needs_clarification"]:
+            question = result.get("clarification_question")
+            answer = ask_user(question or "Could you clarify your request?")
+            history.append((question or "", answer))
+            current_text = f"{raw_text}\n\nClarification: {answer}"
+            continue
+
+        return ParseOutcome(
+            query=None,
+            needs_clarification=False,
+            clarification_question=None,
+            errors=result["validation_errors"],
+        )
+
+    return ParseOutcome(
+        query=None,
+        needs_clarification=False,
+        clarification_question=None,
+        errors=["Too many clarification rounds"],
+    )

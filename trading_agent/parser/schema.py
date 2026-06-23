@@ -11,6 +11,22 @@ class NumericConditionInput(BaseModel):
     value: float
 
 
+class ValidationAssessment(BaseModel):
+    """Semantic validation result from the LLM assessor."""
+    is_valid: bool
+    needs_clarification: bool
+    clarification_question: str | None
+    reason: Literal[
+        "unknown_ticker",
+        "ambiguous_ticker",
+        "ambiguous_logic",
+        "missing_info",
+        "contradictory",
+        "other",
+    ] | None
+    issues: list[str]
+
+
 class ParsedQuery(BaseModel):
     """
     The JSON structure the LLM returns. Maps almost 1:1 onto TradingQuery -

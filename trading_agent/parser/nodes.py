@@ -11,9 +11,11 @@ _ENV_FILE = _PROJECT_ROOT / ".env"
 
 def _load_env() -> None:
     load_dotenv(_ENV_FILE)
+
+
 from parser.graph_state import ParserState
-from parser.prompts import SYSTEM_PROMPT
-from parser.schema import ParsedQuery
+from parser.prompts import SYSTEM_PROMPT, VALIDATION_PROMPT
+from parser.schema import ParsedQuery, ValidationAssessment
 
 
 def _get_llm_provider() -> str:
@@ -24,6 +26,13 @@ def _get_llm_provider() -> str:
     if os.getenv("OPENAI_API_KEY") and not os.getenv("ANTHROPIC_API_KEY"):
         return "openai"
     return "anthropic"
+
+
+def _validation_user_message(raw_text: str, parsed_query: ParsedQuery) -> str:
+    return VALIDATION_PROMPT.format(
+        raw_text=raw_text,
+        parsed_json=parsed_query.model_dump_json(indent=2),
+    )
 
 
 def _call_anthropic(raw_text: str) -> ParsedQuery:
@@ -64,6 +73,51 @@ def _call_openai(raw_text: str) -> ParsedQuery:
     return parsed
 
 
+def _call_anthropic_validation(raw_text: str, parsed_query: ParsedQuery) -> ValidationAssessment:
+    from anthropic import Anthropic
+
+    client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    user_message = _validation_user_message(raw_text, parsed_query)
+
+    message = client.beta.messages.parse(
+        model=model,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": user_message}],
+        output_format=ValidationAssessment,
+    )
+    if message.parsed_output is None:
+        raise ValueError("LLM returned no structured validation output")
+    return message.parsed_output
+
+
+def _call_openai_validation(raw_text: str, parsed_query: ParsedQuery) -> ValidationAssessment:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    model = os.getenv("OPENAI_MODEL", "gpt-4o")
+    user_message = _validation_user_message(raw_text, parsed_query)
+
+    completion = client.beta.chat.completions.parse(
+        model=model,
+        messages=[{"role": "user", "content": user_message}],
+        response_format=ValidationAssessment,
+    )
+    parsed = completion.choices[0].message.parsed
+    if parsed is None:
+        raise ValueError("LLM returned no structured validation output")
+    return parsed
+
+
+def _call_ollama_validation(raw_text: str, parsed_query: ParsedQuery) -> ValidationAssessment:
+    """Semantic validation via the configured LLM provider."""
+    _load_env()
+    provider = _get_llm_provider()
+    if provider == "openai":
+        return _call_openai_validation(raw_text, parsed_query)
+    return _call_anthropic_validation(raw_text, parsed_query)
+
+
 def parse_node(state: ParserState) -> ParserState:
     """
     Sends state["raw_text"] + the system prompt (from prompts.py) to the
@@ -72,10 +126,6 @@ def parse_node(state: ParserState) -> ParserState:
     """
     _load_env()
     raw_text = state["raw_text"]
-
-    # TODO: implement clarification loop — if the query is ambiguous, set
-    # needs_clarification=True and route back to ask_user_node instead of
-    # calling the LLM again with the same text.
 
     try:
         provider = _get_llm_provider()
@@ -93,21 +143,12 @@ def parse_node(state: ParserState) -> ParserState:
 
 def validate_node(state: ParserState) -> ParserState:
     """
-    Builds a TradingQuery directly from parsed_query - this is now a
-    straightforward field-by-field mapping, NOT tree construction:
-        - action: ParsedQuery.action -> TradingQuery.action
-        - ticker: ParsedQuery.ticker -> TradingQuery.ticker
-        - conditions: each NumericConditionInput -> a core.NumericCondition
-          (ticker, operator, value - direct copy, no wrapping)
-        - logic: ParsedQuery.logic -> TradingQuery.logic
-        - raw_text: state["raw_text"] -> TradingQuery.raw_text
+    Phase A — fast rule checks (empty ticker / conditions).
+    Phase B — semantic validation via LLM assessment.
 
-    Also do basic semantic validation before building (e.g. ticker is a
-    non-empty string, conditions list is non-empty - Pydantic already
-    covers most of this during parse, this is a light extra check).
-
-    Updates state["trading_query"] with the result, or
-    state["validation_errors"] if it fails.
+    If needs_clarification: set state flags, do not build trading_query.
+    If is_valid: map parsed_query -> TradingQuery.
+    If invalid and not clarifiable: append issues to validation_errors.
     """
     parsed = state.get("parsed_query")
     if parsed is None:
@@ -129,6 +170,22 @@ def validate_node(state: ParserState) -> ParserState:
 
     if errors:
         state["validation_errors"].extend(errors)
+        return state
+
+    try:
+        assessment = _call_ollama_validation(state["raw_text"], parsed)
+    except Exception as exc:
+        state["validation_errors"].append(f"LLM validation failed: {exc}")
+        return state
+
+    if assessment.needs_clarification:
+        state["needs_clarification"] = True
+        state["clarification_question"] = assessment.clarification_question
+        state["clarification_reason"] = assessment.reason
+        return state
+
+    if not assessment.is_valid:
+        state["validation_errors"].extend(assessment.issues or ["Validation failed"])
         return state
 
     conditions = [

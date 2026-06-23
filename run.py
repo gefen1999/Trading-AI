@@ -21,7 +21,7 @@ def main():
         print(f"[1/4] Raw query: {RAW_QUERY}")
 
         # Step 1: parse free text into a TradingQuery
-        query = parse_trading_query(RAW_QUERY)
+        query = parse_trading_query(RAW_QUERY, ask_user=lambda q: input(f"{q}\n> "))
         print(f"[2/4] Parsed query: action={query.action}, ticker={query.ticker}, "
               f"logic={query.logic}, conditions={query.conditions}")
 
